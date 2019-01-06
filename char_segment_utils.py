@@ -1,7 +1,7 @@
 # Importing required libraries
 import cv2
 import numpy as np
-
+from matplotlib import pyplot as plt
 
 def sort_contours(contours, method='left-to-right'):
     """
@@ -122,6 +122,7 @@ def get_box_lines(path):
     Does the same for spaces between the boxes and the heights of the boxes
     """
     rgb = cv2.imread(path)
+    rgbbox = cv2.imread(path)
     major_contours = find_major_contours(rgb)
     contour_lines = separate_lines(major_contours)
     box_lines = []
@@ -135,6 +136,7 @@ def get_box_lines(path):
         space_widths = []
         for contour in contours:
             x, y, w, h = cv2.boundingRect(contour)
+            cv2.rectangle(rgbbox, (x, y), (x+w, y+h), (0, 255, 0), 2)
             boxes.append(rgb[y:y + h, x:x + w])
             if (x - prev_dims['x'] - prev_dims['w']) > 0:
                 # If box isn't overlapping with the previous box
@@ -147,7 +149,7 @@ def get_box_lines(path):
         space_widths_lines.append(space_widths)
         box_lines.append(boxes)
         box_height_lines.append(box_heights)
-    return box_lines, space_widths_lines, box_height_lines
+    return box_lines, space_widths_lines, box_height_lines,rgbbox
 
 
 def image_resize(img_to_resize):
@@ -170,7 +172,7 @@ def threshold(img_resized):
     return ath
 
 
-def drawrect(img_resized, ath, prev_w, space_width):
+def get_letters_and_spaces(img_resized, ath, prev_w, space_width):
     """
     Returns:
     1. A list of all the letters in the image
@@ -240,13 +242,6 @@ def pad_letter(img, thresh):
     return img
 
 
-"""def num2char(num):
-    keys = list(range(0, 34))
-    values = [i for i in '23456789ABCDEFGHIJKLMNOPQRSTUVWXYZ']
-    dictionary = dict(zip(keys, values))
-    return dictionary[num]"""
-
-
 def predict_letter(letter, thresh, model):
     """
     Predicts the character in the input image
@@ -269,7 +264,7 @@ def resize_space_widths(space_widths_lines, box_height_lines):
     return resized_space_widths_lines
 
 
-def get_letters_and_spaces(box_lines, resized_space_widths_lines):
+def get_letters_and_spaces_lines(box_lines, resized_space_widths_lines):
     """
     Get list of lists of letters and spaces inside boxes
     """
@@ -283,7 +278,7 @@ def get_letters_and_spaces(box_lines, resized_space_widths_lines):
         for box in boxes:
             resized_box = image_resize(box)
             ath = threshold(resized_box)
-            letter, spaces, prev_w = drawrect(resized_box, ath, prev_w, space_widths[space_index])
+            letter, spaces, prev_w = get_letters_and_spaces(resized_box, ath, prev_w, space_widths[space_index])
             letters.append(letter)
             space_index += 1
             intra_box_spaces_line.append(spaces)
@@ -292,20 +287,43 @@ def get_letters_and_spaces(box_lines, resized_space_widths_lines):
     return letters_lines, intra_box_spaces_lines
 
 
-def predict_text(letters_lines, intra_box_spaces_lines, model):
+def predict_text(path,letters_lines, intra_box_spaces_lines, model,rgbbox):
     """
     Predict the text and print it
     """
-    prediction = ''
-    for letters_line, intra_box_spaces_line in zip(letters_lines, intra_box_spaces_lines):
+    prediction = ['Text:']
+    for letters_line,intra_box_spaces_line in zip(letters_lines,intra_box_spaces_lines):
         pred_line = []
-        for letters, intra_box_spaces in zip(letters_line, intra_box_spaces_line):
+        for letters,intra_box_spaces in zip(letters_line,intra_box_spaces_line):
             pred_word = []
             for letter in letters:
-                pred = predict_letter(letter, 150, model)
+                pred = predict_letter(letter,150,model)
                 pred_word.append(pred)
             for space in reversed(intra_box_spaces):
-                pred_word.insert(space, ' ')
+                pred_word.insert(space,' ')
             pred_line.append(''.join(pred_word))
-        prediction += ''.join(pred_line) + '\n'
-    print(prediction)
+        prediction.append(''.join(pred_line))
+        #prediction += ''.join(pred_line) + '\n'
+
+    print('\n'.join(prediction))
+    text_width = max([len(line) for line in prediction])
+    text_height = len(prediction)
+    fontsize = np.int(np.floor(((rgbbox.shape[1])/text_width)*0.5/24))
+    if fontsize == 0:
+        fontsize = 1
+    borderColor = 1
+    if np.average(rgbbox) > 1:
+        borderColor = borderColor*255
+    borderColorList = rgbbox.shape[2]*[borderColor]
+    image_height,image_width = rgbbox.shape[:2]
+    seperator_value = [0,0,0]
+    if rgbbox.shape[2] == 4:
+        seperator_value.append(1)
+    rgbbox = cv2.copyMakeBorder(rgbbox,top = 0, bottom = 5, left = 0, right = 0, borderType= cv2.BORDER_CONSTANT, value=seperator_value)
+    rgbbox = cv2.copyMakeBorder(rgbbox,top = 0, bottom = text_height*30*fontsize + 30, left = 0, right = 0, borderType= cv2.BORDER_CONSTANT, value=borderColorList)
+    line_number = 1
+    for line in prediction:
+        y_coord = 30*fontsize*line_number+10+image_height
+        line_number += 1
+        cv2.putText(rgbbox,line,(10,y_coord), cv2.FONT_HERSHEY_SIMPLEX, fontsize,(0,0,0,1),fontsize*2,cv2.LINE_AA)
+    plt.imsave('outputs/' + '_text.'.join(path.split('/')[-1].split('.')),rgbbox)
